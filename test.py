@@ -1,12 +1,20 @@
 import os
 import threading
+from osgeo import ogr
+from tkinter.ttk import Combobox
 import arcpy
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import Frame, Label, filedialog, messagebox
+
+
 base_path = "D:\czx\data"
 arcpy.env.workspace = base_path
 
+X_PATH_LIST = {}
+Y_PATH = ""
+X_COMBOX  = {}
 #读取数据
+
 class fileHandel:
     def __init__(self,path,type,qulity):
         self.path = path
@@ -22,32 +30,118 @@ class fileHandel:
                     counter += 1
                 filename = f"{name}_{counter}{ext}"
         return filename
+    
     def readFile():
+         # 打开文件选择对话框，允许选择多个文件
+        file_paths = filedialog.askopenfilenames(
+        title="选择Shapefiles",
+        filetypes=[("Shapefiles", "*.shp")]
+        )
+        if not file_paths:
+            return  # 用户取消选择
+        
+        # 为每个Shapefile创建一个下拉框和标签
+        for file_path in file_paths:
+            # 读取Shapefile
+            X_PATH_LIST[os.path.basename(file_path)]=file_path
+            driver = ogr.GetDriverByName('ESRI Shapefile')
+            dataSource = driver.Open(file_path, 0)  # 0表示只读模式
+            layer = dataSource.GetLayer()
+
+            # 获取属性字段名称
+            fields = [field_def.GetName() for field_def in layer.schema]
+
+            # 获取最后一个shapefile_frame来添加新的下拉框和标签
+            shapefile_frame = root.shapefile_frames[-1]
+
+            # 创建标签
+            label = Label(shapefile_frame, text=os.path.basename(file_path)+"分层字段：")
+            label.pack(side=tk.TOP)
+            
+            # 创建并填充下拉框
+            combobox = Combobox(shapefile_frame, values= fields)
+            combobox.pack(side=tk.TOP)
+            # combobox.bind("<<ComboboxSelected>>", print("change"))
+            X_COMBOX[os.path.basename(file_path)] = combobox
+            combobox.current(0)  # 设置默认选项
+        
         pass
+    def copy_attribute_and_add_field(shapefile_path, attribute_index):
+        # 打开Shapefile
+        driver = ogr.GetDriverByName('ESRI Shapefile')
+        dataSource = driver.Open(shapefile_path, 1)  # 0 表示只读模式
+        layer = dataSource.GetLayer()
+
+        # 获取字段名称
+        field_name = layer.GetLayerDefn().GetFieldDefn(attribute_index).GetName()
+
+        # 创建新的字段名称
+        base_name = os.path.splitext(os.path.basename(shapefile_path))[0]
+        new_field_name = f"split_{base_name}"
+
+        # 创建新的字段定义，设置为字符类型
+        new_field_def = ogr.FieldDefn(new_field_name, ogr.OFTString)
+        new_field_def.SetWidth(255)  # 设置字段宽度，根据需要调整
+
+        # 添加新字段到图层
+        layer.CreateField(new_field_def)
+
+        # 创建新的FeatureDefinition，用于写入新数据
+        feature_def = layer.GetLayerDefn()
+
+        # 打开Shapefile以供写入
+        dataSource = driver.Open(shapefile_path, 1)  # 1 表示读写模式
+        layer = dataSource.GetLayer()
+
+        # 遍历所有要素（Feature），复制属性并添加新字段
+        for feature in layer:
+            # 获取原始属性值
+            original_value = feature.GetField(attribute_index)
+            print(original_value)
+            # 创建新要素
+            new_feature = ogr.Feature(feature_def)
+            new_feature.SetFromOLDFeature(feature)
+
+            # 设置新字段的值
+            new_feature.SetField(new_field_name, str(original_value))
+
+            # 修改要素并写入
+            layer.DeleteFeature(feature.GetFID())  # 删除旧要素
+            layer.CreateFeature(new_feature)  # 创建新要素
+
+            # 销毁新要素
+            new_feature.Destroy()
+            print("changing")
+        # 销毁图层和数据源
+        layer = None
+        dataSource = None
+        
     def checkFileType():
         """TODO:判断是否点还是面"""
         pass
     def featureToPoint(in_features,out_raster,cell_size=1000):
-        """TODO:离散化网格"""
-        cell_size = int(cell_size)
-        filename = in_features.split("/")[-1][:-4]
-        path =  out_raster.split(".")[0]
-        out_raster = path + '/' + filename + "_raster.img"
-        # out_raster =  filename + "_raster"
-        print(out_raster)
-        t1 = threading.Thread(target=arcpy.conversion.FeatureToRaster(in_features, "NTD", out_raster, cell_size))
+        # """TODO:离散化网格"""
+        
+        cell_size = int(cell_size) #分辨率
+        filename = in_features.split("/")[-1][:-4] #获取输出的时候的文件名前缀
+        path =  out_raster.split(".")[0] #获取输出的文件夹目录
 
+        out_raster = path + '/' + filename + "_raster.img"
+
+        # 开个进程先把数据转成栅格，这样方便控制输出的网格分辨率
+        t1 = threading.Thread(target=arcpy.conversion.FeatureToRaster(in_features, "NTD", out_raster, cell_size))
         # 启动线程
         t1.start()
         # 等待线程执行完毕
         t1.join()
-        # out_point_features = out_raster.split(".")[0] + filename + "_point"
+
+        # 等转成栅格之后再进行下一步转成网格点
         out_point_features =   filename + "_point.shp"
-        out_point_features = fileHandel.unique_filename(base_path,out_point_features)
-        in_raster = out_raster
-        arcpy.conversion.RasterToPoint(in_raster, out_point_features, "Value")
-        print(out_point_features,"success")
+        # out_point_features = fileHandel.unique_filename(base_path,out_point_features) TODO：后期支持重名的时候加个后缀
+        arcpy.conversion.RasterToPoint(out_raster, out_point_features, "Value")
+        print("success save in :",path,out_point_features)
         pass
+    
     def X1andX2():
         """TODO:求两个X区域的交集"""
         # returen X3(和X1X2同等级的)
@@ -92,17 +186,32 @@ class windowHandel:
         file_paths = filedialog.askopenfilename(
         title="选择文件",
         initialdir="/",
-        filetypes=(("所有文件", "*.*"), ("文本文件", "*.txt"), ("图片文件", "*.png;*.jpg;*.gif"),),
-        multiple=True ) # 允许选择多个文件
+        filetypes=(("矢量文件", "*.shp"),("所有文件", "*.*") ),
+         ) 
         
         if file_paths:  # 检查是否选择了文件
-            file_label.config(text="\n".join(file_paths))  # 更新标签显示所有选中的文件路径
+            Y_PATH = file_paths
+            file_label.config(text=file_paths)  # 更新标签显示所有选中的文件路径
 
 
     def choose_directory():
         directory_path = filedialog.askdirectory()
         if directory_path:
             dir_label.config(text=directory_path)
+    def get_selected_fields():
+        # selected_fields = []
+        # for frame, combobox in shapefile_frames:
+        #     selected_index = combobox.curselection()  # 获取当前选中项的索引
+        #     if selected_index:
+        #         selected_field = combobox.get(selected_index)  # 获取选中项的值
+        #         selected_fields.append(selected_field)
+        # print(selected_fields)
+        # return selected_fields
+        # messagebox.showinfo("111")
+        for i in X_PATH_LIST:
+            fileHandel.copy_attribute_and_add_field(X_PATH_LIST[i], X_COMBOX[i].current())
+            print(X_COMBOX[i].current())
+        print(X_COMBOX)
 
     def confirm():
         messagebox.showinfo("确认", f"文件路径: {file_label.cget('text')}\n输出路径: {dir_label.cget('text')}")
@@ -113,10 +222,11 @@ class windowHandel:
 
 
 if __name__ == "__main__":
+
     root = tk.Tk()
     root.title("地理探测器")
     root.geometry("800x500")
-
+    root.shapefile_frames = []  # 创建一个空列表来存储shapefile_frame
     # 添加分辨率输入框
     resolution_label = tk.Label(root, text="输入分辨率（单位：米）:", font=("Arial", 12))
     resolution_label.pack()
@@ -133,14 +243,20 @@ if __name__ == "__main__":
     choose_file_btn.pack()
     
 
-    # 选择X1和X2
+    # 选择X
     file_label = tk.Label(root, text="选择自变量", font=("Arial", 12))
     file_label.pack(pady=10)
     
-    
-
-    choose_file_btn = tk.Button(root, text="选择文件", command=windowHandel.choose_file)
+    choose_file_btn = tk.Button(root, text="选择文件", command=fileHandel.readFile)
     choose_file_btn.pack()
+
+    # # 创建下拉框
+    # field_combobox = Combobox(root)
+    # field_combobox.pack(pady=20)
+     # 创建一个Frame来容纳所有的Shapefile选择器
+    shapefile_frame = Frame(root)
+    shapefile_frame.pack(expand=True)
+
 
     dir_label = tk.Label(root, text="选择输出路径", font=("Arial", 12))
     dir_label.pack(pady=10)
@@ -148,14 +264,19 @@ if __name__ == "__main__":
     choose_dir_btn = tk.Button(root, text="选择输出路径", command=windowHandel.choose_directory)
     choose_dir_btn.pack()
 
-    confirm_btn = tk.Button(root, text="确定", command=windowHandel.confirm)
+    cancel1_btn = tk.Button(root, text="hah ", command=windowHandel.get_selected_fields)
+    cancel1_btn.pack(side=tk.RIGHT, padx=10)
+
+    confirm_btn = tk.Button(root, text="开始计算", command=windowHandel.confirm)
     confirm_btn.pack(side=tk.RIGHT, padx=10)
 
     cancel_btn = tk.Button(root, text="取消", command=windowHandel.cancel)
     cancel_btn.pack(side=tk.RIGHT, padx=10)
-
+    # 将shapefile_frame添加到一个列表中，以便后续可以引用它
+    root.shapefile_frames.append(shapefile_frame)
+    
     root.mainloop()
 
-    print("hello world")
+    print("closed window")
 
     
