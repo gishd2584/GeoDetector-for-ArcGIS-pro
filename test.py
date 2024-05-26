@@ -31,7 +31,7 @@ class fileHandel:
                 filename = f"{name}_{counter}{ext}"
         return filename
     
-    def readFile():
+    def read_file():
          # 打开文件选择对话框，允许选择多个文件
         file_paths = filedialog.askopenfilenames(
         title="选择Shapefiles",
@@ -66,6 +66,7 @@ class fileHandel:
             combobox.current(0)  # 设置默认选项
         
         pass
+
     def copy_attribute_and_add_field(shapefile_path, attribute_index):
         # 打开Shapefile
         driver = ogr.GetDriverByName('ESRI Shapefile')
@@ -84,15 +85,10 @@ class fileHandel:
         # 添加新字段到图层
         layer.CreateField(new_field_def)
 
-        # 创建新的FeatureDefinition，用于写入新数据
-        feature_def = layer.GetLayerDefn()
-
-        
-
         # 遍历所有要素（Feature），复制属性并添加新字段
         for feature in layer:
             attribute_value = feature.GetField(attribute_index)
-            feature.SetField(new_field_name, f'{attribute_value}')  # 设置新字段的值为“默认”
+            feature.SetField(new_field_name, f'{attribute_value}')  
             layer.SetFeature(feature)  # 更新特征
             print(attribute_value)
         # 销毁图层和数据源
@@ -100,12 +96,11 @@ class fileHandel:
         layer = None
         dataSource = None
         
-    def checkFileType():
+    def check_file_type():
         """TODO:判断是否点还是面"""
         pass
-    def featureToPoint(in_features,out_raster,cell_size=1000):
+    def feature_to_point(in_features,out_raster,cell_size=1000):
         # """TODO:离散化网格"""
-        
         cell_size = int(cell_size) #分辨率
         filename = in_features.split("/")[-1][:-4] #获取输出的时候的文件名前缀
         path =  out_raster.split(".")[0] #获取输出的文件夹目录
@@ -138,23 +133,23 @@ class GeoDetector:
         self.file = file
         pass
     
-    def sortYbyX(self,Y,X):
+    def sort_y_by_x(self,Y,X):
         # TODO:这里记一下X中Y的样本数后面公式要用到
         # returen{x1:[1,2,3,4],x2:[5,6,7,8]}
         pass
 
     # 风险区探测、风险因子探测、生态探测以及交互探测
     # k area detector (a), Risk factor detector (b), Ecological detector (c) and Interaction detector (d)
-    def riskAearDetector(self,Y,X):
+    def risk_aear_detector(self,Y,X):
         # 求Y在X各个子区域中的均值、方差
         # t检验上述子区域之间的差异
         pass
 
-    def riskFactorDetector(self,Y,X):
+    def risk_factor_detector(self,Y,X):
         # 直接带入公式求q
         pass
 
-    def ecologicalDetector(self,Y,X1,X2):
+    def ecological_detector(self,Y,X1,X2):
         pass
 
     def interactionDetector(self,Y,X1,X2):
@@ -182,16 +177,8 @@ class windowHandel:
         directory_path = filedialog.askdirectory()
         if directory_path:
             dir_label.config(text=directory_path)
+
     def get_selected_fields():
-        # selected_fields = []
-        # for frame, combobox in shapefile_frames:
-        #     selected_index = combobox.curselection()  # 获取当前选中项的索引
-        #     if selected_index:
-        #         selected_field = combobox.get(selected_index)  # 获取选中项的值
-        #         selected_fields.append(selected_field)
-        # print(selected_fields)
-        # return selected_fields
-        # messagebox.showinfo("111")
         for i in X_PATH_LIST:
             fileHandel.copy_attribute_and_add_field(X_PATH_LIST[i], X_COMBOX[i].current())
             print(X_COMBOX[i].current())
@@ -234,9 +221,6 @@ if __name__ == "__main__":
     choose_file_btn = tk.Button(root, text="选择文件", command=fileHandel.readFile)
     choose_file_btn.pack()
 
-    # # 创建下拉框
-    # field_combobox = Combobox(root)
-    # field_combobox.pack(pady=20)
      # 创建一个Frame来容纳所有的Shapefile选择器
     shapefile_frame = Frame(root)
     shapefile_frame.pack(expand=True)
