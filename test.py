@@ -69,19 +69,17 @@ class fileHandel:
     def copy_attribute_and_add_field(shapefile_path, attribute_index):
         # 打开Shapefile
         driver = ogr.GetDriverByName('ESRI Shapefile')
-        dataSource = driver.Open(shapefile_path, 1)  # 0 表示只读模式
+        # 打开Shapefile以供写入
+        dataSource = driver.Open(shapefile_path, 1)  # 1 表示读写模式
         layer = dataSource.GetLayer()
-
-        # 获取字段名称
-        field_name = layer.GetLayerDefn().GetFieldDefn(attribute_index).GetName()
 
         # 创建新的字段名称
         base_name = os.path.splitext(os.path.basename(shapefile_path))[0]
-        new_field_name = f"split_{base_name}"
+        new_field_name = f"split_{base_name[0:3]}"
 
         # 创建新的字段定义，设置为字符类型
         new_field_def = ogr.FieldDefn(new_field_name, ogr.OFTString)
-        new_field_def.SetWidth(255)  # 设置字段宽度，根据需要调整
+        new_field_def.SetWidth(50)  # 设置字段宽度，根据需要调整
 
         # 添加新字段到图层
         layer.CreateField(new_field_def)
@@ -89,30 +87,16 @@ class fileHandel:
         # 创建新的FeatureDefinition，用于写入新数据
         feature_def = layer.GetLayerDefn()
 
-        # 打开Shapefile以供写入
-        dataSource = driver.Open(shapefile_path, 1)  # 1 表示读写模式
-        layer = dataSource.GetLayer()
+        
 
         # 遍历所有要素（Feature），复制属性并添加新字段
         for feature in layer:
-            # 获取原始属性值
-            original_value = feature.GetField(attribute_index)
-            print(original_value)
-            # 创建新要素
-            new_feature = ogr.Feature(feature_def)
-            new_feature.SetFromOLDFeature(feature)
-
-            # 设置新字段的值
-            new_feature.SetField(new_field_name, str(original_value))
-
-            # 修改要素并写入
-            layer.DeleteFeature(feature.GetFID())  # 删除旧要素
-            layer.CreateFeature(new_feature)  # 创建新要素
-
-            # 销毁新要素
-            new_feature.Destroy()
-            print("changing")
+            attribute_value = feature.GetField(attribute_index)
+            feature.SetField(new_field_name, f'{attribute_value}')  # 设置新字段的值为“默认”
+            layer.SetFeature(feature)  # 更新特征
+            print(attribute_value)
         # 销毁图层和数据源
+        # dataSource.ExecuteSQL('REPACK your_vector_file.shp')  # 可选，重新打包以优化文件
         layer = None
         dataSource = None
         
