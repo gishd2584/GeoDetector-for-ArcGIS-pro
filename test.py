@@ -1,4 +1,5 @@
 import os
+import shutil
 import threading
 from osgeo import ogr
 from tkinter.ttk import Combobox
@@ -11,8 +12,9 @@ base_path = "D:\czx\data"
 arcpy.env.workspace = base_path
 
 X_PATH_LIST = {}
-Y_PATH = ""
+Y_PATH = {}
 X_COMBOX  = {}
+out_point_features = {}
 #读取数据
 
 class fileHandel:
@@ -73,17 +75,25 @@ class fileHandel:
         # 打开Shapefile以供写入
         dataSource = driver.Open(shapefile_path, 1)  # 1 表示读写模式
         layer = dataSource.GetLayer()
-
+        # 获取图层定义
+        layer_defn = layer.GetLayerDefn()
         # 创建新的字段名称
         base_name = os.path.splitext(os.path.basename(shapefile_path))[0]
         new_field_name = f"split_{base_name[0:3]}"
+        # 检查是否存在同名字段
+        field_index = layer_defn.GetFieldIndex(new_field_name)
+        # 如果不存在，添加字段
+        if field_index != -1:
+           pass
+        else:
+             # 创建新的字段定义，设置为字符类型
+            new_field_def = ogr.FieldDefn(new_field_name, ogr.OFTString)
+            new_field_def.SetWidth(50)  # 设置字段宽度，根据需要调整
 
-        # 创建新的字段定义，设置为字符类型
-        new_field_def = ogr.FieldDefn(new_field_name, ogr.OFTString)
-        new_field_def.SetWidth(50)  # 设置字段宽度，根据需要调整
+            # 添加新字段到图层
+            layer.CreateField(new_field_def)
 
-        # 添加新字段到图层
-        layer.CreateField(new_field_def)
+       
 
         # 遍历所有要素（Feature），复制属性并添加新字段
         for feature in layer:
@@ -106,7 +116,7 @@ class fileHandel:
         path =  out_raster.split(".")[0] #获取输出的文件夹目录
 
         out_raster = path + '/' + filename + "_raster.img"
-
+        print("input in :",in_features,123123,out_raster,123123,cell_size,11111111111111111111111111111)
         # 开个进程先把数据转成栅格，这样方便控制输出的网格分辨率
         t1 = threading.Thread(target=arcpy.conversion.FeatureToRaster(in_features, "NTD", out_raster, cell_size))
         # 启动线程
@@ -115,10 +125,10 @@ class fileHandel:
         t1.join()
 
         # 等转成栅格之后再进行下一步转成网格点
-        out_point_features =   filename + "_point.shp"
+        out_point_features["path"] =   filename + "_point.shp"
         # out_point_features = fileHandel.unique_filename(base_path,out_point_features) TODO：后期支持重名的时候加个后缀
-        arcpy.conversion.RasterToPoint(out_raster, out_point_features, "Value")
-        print("success save in :",path,out_point_features)
+        arcpy.conversion.RasterToPoint(out_raster, out_point_features["path"], "Value")
+        print("success save in :",path,out_point_features["path"])
         pass
     
     def X1andX2():
@@ -127,7 +137,37 @@ class fileHandel:
         pass
     # 下面就是针对Y（点要素）和X（面要素的处理了）
     # TODO：对于有偏的样本Y点要素灭有做处理
-
+    def create_directory_if_not_exists(dir_name):
+        dir_path = os.path.join(base_path, dir_name.split(".")[0])
+    # 检查目录是否存在
+        if not os.path.exists(dir_path):
+            # 如果目录不存在，则创建目录
+            os.makedirs(dir_path)
+            print(f"目录 '{dir_path}' 已创建。")
+        else:
+            # 如果目录已存在，清空里面的文件
+            for filename in os.listdir(dir_path):
+                file_path = os.path.join(dir_path, filename)
+                try:
+                    # 如果是文件或链接，则删除
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    # 如果是目录，则递归删除
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print(f'无法删除 {file_path}：{e}')
+            print(f"目录 '{dir_path}' 中的内容已被清空。")
+    def split_point_by_polygon():
+        for i in X_PATH_LIST:
+            t = threading.Thread(target=fileHandel.create_directory_if_not_exists(i))
+            t.start()
+            t.join()
+            print(123123123123123,f"split_{i[0:3]}",out_point_features["path"],arcpy.env.workspace,X_PATH_LIST[i],os.path.join(base_path, i.split(".")[0]))
+            split_field = f"split_{i[0:3]}"
+            t_split = threading.Thread(target=arcpy.analysis.Split(out_point_features["path"],X_PATH_LIST[i], split_field, os.path.join(base_path, i.split(".")[0])))
+            t_split.start()
+            t_split.join()
 class GeoDetector:
     def __init__(self,file):
         self.file = file
@@ -169,9 +209,8 @@ class windowHandel:
          ) 
         
         if file_paths:  # 检查是否选择了文件
-            Y_PATH = file_paths
             file_label.config(text=file_paths)  # 更新标签显示所有选中的文件路径
-
+       
 
     def choose_directory():
         directory_path = filedialog.askdirectory()
@@ -182,9 +221,14 @@ class windowHandel:
         for i in X_PATH_LIST:
             fileHandel.copy_attribute_and_add_field(X_PATH_LIST[i], X_COMBOX[i].current())
             print(X_COMBOX[i].current())
+        t = threading.Thread(target=fileHandel.feature_to_point(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get()))
+        t.start()
+        t.join()
+        fileHandel.split_point_by_polygon()
         print(X_COMBOX)
 
     def confirm():
+        base_path = dir_label.cget('text')
         messagebox.showinfo("确认", f"文件路径: {file_label.cget('text')}\n输出路径: {dir_label.cget('text')}")
         fileHandel.featureToPoint(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get())
 
@@ -218,7 +262,7 @@ if __name__ == "__main__":
     file_label = tk.Label(root, text="选择自变量", font=("Arial", 12))
     file_label.pack(pady=10)
     
-    choose_file_btn = tk.Button(root, text="选择文件", command=fileHandel.readFile)
+    choose_file_btn = tk.Button(root, text="选择文件", command=fileHandel.read_file)
     choose_file_btn.pack()
 
      # 创建一个Frame来容纳所有的Shapefile选择器
