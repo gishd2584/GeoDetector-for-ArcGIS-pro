@@ -1,3 +1,5 @@
+﻿
+import glob
 import itertools
 import os
 import shutil
@@ -8,6 +10,9 @@ import arcpy
 import tkinter as tk
 from tkinter import Frame, Label, filedialog, messagebox
 import pandas as gpd
+from scipy.stats import t
+from scipy.stats import f,ncf
+import pandas as pd
 
 base_path = "D:\czx\data"
 arcpy.env.workspace = base_path
@@ -72,8 +77,71 @@ class fileHandel:
             combobox.current(0)  # 设置默认选项
         
         pass
+    def out_txt():
+        formatted_str = fileHandel.format_dict(GLOBALOUTPUT)
+        path = os.path.join(base_path, 'output.txt')
+        with open(path, 'w') as file:
+            file.write(formatted_str)
 
-    def copy_attribute_and_add_field(shapefile_path, attribute_index):
+
+    def format_dict(d, indent=0):
+        space = '    '  # 定义每个缩进级别的空格数
+        result = ""
+        
+        # 添加开始的大括号
+        result += "{\n"
+        
+        # 遍历字典中的所有项
+        for key, value in d.items():
+            # 添加键和值之间的分隔符（除了第一个键之外）
+            if result.endswith("{\n"):
+                sep = ""
+            else:
+                sep = ",\n"
+            
+            # 添加缩进
+            result += (indent + 1) * space + sep + f"{key!r}: "
+            
+            # 如果值是字典，则递归调用format_dict
+            if isinstance(value, dict):
+                result += fileHandel.format_dict(value, indent + 1)
+            # 如果值是列表，则格式化列表
+            elif isinstance(value, list):
+                result += fileHandel.format_list(value, indent + 1)
+            # 其他类型直接转换为字符串
+            else:
+                result += str(value)
+            
+        # 添加结束的大括号
+        result += "\n" + indent * space + "}"
+        return result
+
+    def format_list(lst, indent=0):
+        space = '    '  # 定义每个缩进级别的空格数
+        result = "[\n"
+        
+        for item in lst:
+            # 添加项之间的分隔符（除了第一个项之外）
+            if result.endswith("[\n"):
+                sep = ""
+            else:
+                sep = ",\n"
+            
+            # 添加缩进
+            result += (indent + 1) * space + sep
+            
+            # 如果项是字典或列表，则递归调用相应的格式化函数
+            if isinstance(item, dict):
+                result += format_dict(item, indent + 1)
+            elif isinstance(item, list):
+                result += format_list(item, indent + 1)
+            # 其他类型直接转换为字符串
+            else:
+                result += str(item)
+        
+        result += "\n" + indent * space + "]"
+        return result
+    def copy_attribute_and_add_field(shapefile_path, attribute_index,union=False):
         # 打开Shapefile
         driver = ogr.GetDriverByName('ESRI Shapefile')
         # 打开Shapefile以供写入
@@ -84,6 +152,9 @@ class fileHandel:
         # 创建新的字段名称
         base_name = os.path.splitext(os.path.basename(shapefile_path))[0]
         new_field_name = f"split_{base_name[0:3]}"
+        if union:
+            new_field_name = f"union_id"
+        
         # 检查是否存在同名字段
         field_index = layer_defn.GetFieldIndex(new_field_name)
         # 如果不存在，添加字段
@@ -100,8 +171,13 @@ class fileHandel:
        
 
         # 遍历所有要素（Feature），复制属性并添加新字段
+        FID = 0
         for feature in layer:
-            attribute_value = feature.GetField(attribute_index)
+            if union:
+                FID = FID + 1
+                attribute_value = FID
+            else:
+                attribute_value = feature.GetField(attribute_index)
             feature.SetField(new_field_name, f'{attribute_value}')  
             layer.SetFeature(feature)  # 更新特征
             print(attribute_value)
@@ -120,9 +196,19 @@ class fileHandel:
         path =  out_raster.split(".")[0] #获取输出的文件夹目录
 
         out_raster = path + '/' + filename + "_raster.img"
-        if  os.path.exists(out_raster):
-             os.unlink(out_raster)
-        print("input in :",in_features,123123,out_raster,123123,cell_size,11111111111111111111111111111)
+
+        # 使用glob模块查找所有以该前缀开头的文件
+        files_to_delete = glob.glob(f'{path}/{filename}_*')
+        # 遍历找到的文件并删除它们
+        for file_path in files_to_delete:
+            if os.path.isfile(file_path):  # 确保是一个文件
+                print(f'Deleting file: {file_path}')
+                os.remove(file_path)  # 删除文件
+            else:
+                print(f'Skipping non-file: {file_path}')
+                if  os.path.exists(out_raster):
+                    os.unlink(out_raster)
+        # print("input in :",in_features,123123,out_raster,123123,cell_size,11111111111111111111111111111)
         # 开个进程先把数据转成栅格，这样方便控制输出的网格分辨率
         t1 = threading.Thread(target=arcpy.conversion.FeatureToRaster(in_features, "NTD", out_raster, cell_size))
         # 启动线程
@@ -135,6 +221,7 @@ class fileHandel:
         # out_point_features = fileHandel.unique_filename(base_path,out_point_features) TODO：后期支持重名的时候加个后缀
         arcpy.conversion.RasterToPoint(out_raster, out_point_features["path"], "Value")
         print("success save in :",path,out_point_features["path"])
+        fileHandel.split_point_by_polygon(X_PATH_LIST)
         # GeoDetector.risk_aear_detector()
         pass
     
@@ -167,14 +254,16 @@ class fileHandel:
                     print(f'无法删除 {file_path}：{e}')
             print(f"目录 '{dir_path}' 中的内容已被清空。")
 
-    def split_point_by_polygon(PATH_LIST):
+    def split_point_by_polygon(PATH_LIST,union=False):
         for i in PATH_LIST:
-            
             t = threading.Thread(target=fileHandel.create_directory_if_not_exists(i))
             t.start()
             t.join()
             # print(123123123123123,f"split_{i[0:3]}",out_point_features["path"],arcpy.env.workspace,X_PATH_LIST[i],os.path.join(base_path, i.split(".")[0]))
+            print(f"split_{i[0:3]}",177)
             split_field = f"split_{i[0:3]}"
+            if union:
+                split_field = 'union_id'
             t_split = threading.Thread(target=arcpy.analysis.Split(out_point_features["path"],PATH_LIST[i], split_field, os.path.join(base_path, i.split(".")[0])))
             t_split.start()
             t_split.join()
@@ -213,27 +302,35 @@ class GeoDetector:
                         layer = dataSource.GetLayer()
                         # 遍历所有要素（Feature），复制属性并添加新字段
                         sum = 0
-                        sun_squared = 0
+                        sum_squared = 0
                         count = 0
                         for feature in layer:
                             y_value = feature.GetField(GLOBALCONFIG['y_value'])
                             sum += y_value
-                            sun_squared += y_value**2
+                            sum_squared += y_value**2
                             count += 1 
                         arg = sum/count
-                        var = sun_squared/count - arg**2
+                        var = sum_squared/count - arg**2
                         aear_risk[name_space][f'{filename.split(".")[0]}']= {"arg":arg,"var":var,"count":count}
                         
             # 两两组合计算
             keys = list(aear_risk[name_space].keys())
             combinations = list(itertools.combinations(keys, 2))
+            print(aear_risk,name_space,230)
             # print(aear_risk[name_space],combinations)
             for combo in combinations:
-                # print(combo[0],combo[1])
+                print(aear_risk[name_space][combo[0]],aear_risk[name_space][combo[1]],combo[0],combo[1],232)
                 t_value = (aear_risk[name_space][combo[0]]["arg"] - aear_risk[name_space][combo[1]]["arg"])/(aear_risk[name_space][combo[0]]["var"]/aear_risk[name_space][combo[0]]['count'] + aear_risk[name_space][combo[1]]["var"]/aear_risk[name_space][combo[1]]['count'])**0.5
-                aear_risk[name_space][f"{combo[0]}-{combo[1]}"] = t_value
+                df = (aear_risk[name_space][combo[0]]["var"]/aear_risk[name_space][combo[0]]['count'] + aear_risk[name_space][combo[1]]["var"]/aear_risk[name_space][combo[1]]['count'])/((1/(aear_risk[name_space][combo[0]]['count']-1))*((aear_risk[name_space][combo[0]]["var"])/(aear_risk[name_space][combo[0]]['count']))**2+((1/(aear_risk[name_space][combo[1]]['count']-1))*((aear_risk[name_space][combo[1]]["var"])/(aear_risk[name_space][combo[1]]['count']))**2))
+                critical_value = t.ppf(1 - 0.05 / 2, df)
+                if abs(t_value) > critical_value:
+                    # print("拒绝零假设，认为两组之间存在显著差异。")
+                    aear_risk[name_space][f"{combo[0]}-{combo[1]}"] = {'t':t_value,'df':df,'critical_value':critical_value,'reject':True}
+                else:
+                    # print("不能拒绝零假设，认为两组之间没有显著差异。")
+                    aear_risk[name_space][f"{combo[0]}-{combo[1]}"] = {'t':t_value,'df':df,'critical_value':critical_value,'reject':False}
         GLOBALOUTPUT["aear_risk"] = aear_risk
-        # print(GLOBALOUTPUT)
+        # print(GLOBALOUTPUT,236)
         
         # print(file_paths,'\n')
         GeoDetector.ecological_detector()
@@ -251,26 +348,28 @@ class GeoDetector:
         layer = dataSource.GetLayer()
         # 遍历所有要素（Feature），复制属性并添加新字段
         sum = 0
-        sun_squared = 0
+        sum_squared = 0
         count = 0
         for feature in layer:
             y_value = feature.GetField(GLOBALCONFIG['y_value'])
             sum += y_value
-            sun_squared += y_value**2
+            sum_squared += y_value**2
             count += 1 
         arg = sum/count
-        var = sun_squared/count - arg**2
+        var = sum_squared/count - arg**2
         SST = count * var
         GLOBALOUTPUT['SST'] = SST
-
+        GLOBALOUTPUT['total_var'] = var
+        GLOBALOUTPUT['total_count'] = count
 
         for i in X_PATH_LIST:
             name_space = i.split(".")[0]
-           
             data_store_dir = os.path.join(base_path, i.split(".")[0])
             SSW = 0
             # 单独对不同shp文件分层处理
             for root, directories, files in os.walk(data_store_dir):
+                sum_arg_squared = 0
+                sum_N_exp_half_time_arg = 0
                 for filename in files:
                     if filename.endswith('.shp'):
                     # 拼接完整路径
@@ -283,17 +382,30 @@ class GeoDetector:
                         # 遍历所有要素（Feature），复制属性并添加新字段
                         
                         sum = 0
-                        sun_squared = 0
+                        sum_squared = 0
                         count = 0
+                        
+                        
+
                         for feature in layer:
                             y_value = feature.GetField(GLOBALCONFIG['y_value'])
                             sum += y_value
-                            sun_squared += y_value**2
+                            sum_squared += y_value**2
                             count += 1 
+                            
                         arg = sum/count
-                        var = sun_squared/count - arg**2
+                        var = sum_squared/count - arg**2
                         SSW = SSW + count * var
-            GLOBALOUTPUT['risk_factor'][name_space] = 1-SSW/SST   
+                        sum_arg_squared = sum_arg_squared + arg**2
+                        sum_N_exp_half_time_arg = sum_N_exp_half_time_arg + ((count)**0.5)*arg
+                        q = 1-SSW/SST
+                        #lamda value N_popu=totalcount N_stra= count
+                        lamda = (sum_arg_squared - (sum_N_exp_half_time_arg)**2 / GLOBALOUTPUT['total_count']) / GLOBALOUTPUT['total_var']
+                        # F value
+                        F_value = (GLOBALOUTPUT['total_count'] - count)* q / ((count - 1)* (1 - q))
+                        #p value
+                        p_value = ncf.sf(F_value, count - 1, GLOBALOUTPUT['total_count'] - count, nc=lamda)
+            GLOBALOUTPUT['risk_factor'][name_space] = {'q':q,'lamda':lamda,'F_value':F_value,'p_value':p_value}  
         print('\n\n\n\n\n',GLOBALOUTPUT)    
         GeoDetector.interactionDetector()        
         return 'success'
@@ -307,23 +419,36 @@ class GeoDetector:
             # print(combo[0],combo[1])
             SSW_x1 = 0
             SSW_x2 = 0
-            N_x1 = len(GLOBALOUTPUT["aear_risk"][combo[0]])
-            N_x2 = len(GLOBALOUTPUT["aear_risk"][combo[1]])
+            # N_x1 = len(GLOBALOUTPUT["aear_risk"][combo[0]])
+            # N_x2 = len(GLOBALOUTPUT["aear_risk"][combo[1]])
+            N_x1 = 0
+            N_x2 = 0
 
             for i in GLOBALOUTPUT["aear_risk"][combo[0]]:
                 print(combo[0],11111111111111111111111111,i)
                 if '-' in i:
                     continue
-                # N_x1 += GLOBALOUTPUT[combo[0]][i]["count"]
+                N_x1 = N_x1 + GLOBALOUTPUT["aear_risk"][combo[0]][i]["count"]
                 SSW_x1 = SSW_x1+(GLOBALOUTPUT["aear_risk"][combo[0]][i]["var"]*GLOBALOUTPUT["aear_risk"][combo[0]][i]["count"])
 
             for i in GLOBALOUTPUT["aear_risk"][combo[1]]:
                 if '-' in i:
                     continue
-                # N_x1 += GLOBALOUTPUT[combo[0]][i]["count"]
+                N_x2 = N_x2 + GLOBALOUTPUT["aear_risk"][combo[1]][i]["count"]
                 SSW_x2 = SSW_x2+(GLOBALOUTPUT["aear_risk"][combo[1]][i]["var"]*GLOBALOUTPUT["aear_risk"][combo[1]][i]["count"])
+
             f_value = (N_x1*(N_x2-1)*SSW_x1)/(N_x2*(N_x1-1)*SSW_x2)
-            GLOBALOUTPUT["ecological"][f"{combo[0]}-{combo[1]}"] = f_value
+            alpha = 0.05
+            dfn = 1  # 组间自由度
+            dfd = N_x1+N_x2-2  # 组内自由度
+            critical_value = f.ppf(1 - alpha, dfn,dfd)
+            if f_value > critical_value:
+                # print("拒绝零假设")
+                GLOBALOUTPUT["ecological"][f"{combo[0]}-{combo[1]}"] = {'f_value':f_value,'N_x1':N_x1,'N_x2':N_x2,'SSW_x1':SSW_x1,'SSW_x2':SSW_x2,'reject':True,'critical_value':critical_value}
+            else:
+                # print("不能拒绝零假设")
+                GLOBALOUTPUT["ecological"][f"{combo[0]}-{combo[1]}"] = {'f_value':f_value,'N_x1':N_x1,'N_x2':N_x2,'SSW_x1':SSW_x1,'SSW_x2':SSW_x2,'reject':False,'critical_value':critical_value}
+           
         # print(GLOBALOUTPUT)
         GeoDetector.risk_factor_detector()
         return 'success'
@@ -344,10 +469,10 @@ class GeoDetector:
             t_union = threading.Thread(target=arcpy.analysis.Union(inFeatures, outFeatures)) 
             t_union.start()
             t_union.join()
-           
+            fileHandel.copy_attribute_and_add_field(outFeatures, 0,True)
             # X_PATH_LIST[combo[0]]
-           
-        t_split = threading.Thread(target=fileHandel.split_point_by_polygon(X1_X2_PATH_LIST))
+       
+        t_split = threading.Thread(target=fileHandel.split_point_by_polygon(X1_X2_PATH_LIST,True))
         t_split.start()
         t_split.join()
         for i in X1_X2_PATH_LIST:
@@ -366,17 +491,16 @@ class GeoDetector:
                         dataSource = driver.Open(filepath, 0)  # 1 表示读写模式s
                         layer = dataSource.GetLayer()
                         # 遍历所有要素（Feature），复制属性并添加新字段
-                        
                         sum = 0
-                        sun_squared = 0
+                        sum_squared = 0
                         count = 0
                         for feature in layer:
                             y_value = feature.GetField(GLOBALCONFIG['y_value'])
                             sum += y_value
-                            sun_squared += y_value**2
+                            sum_squared += y_value**2
                             count += 1 
                         arg = sum/count
-                        var = sun_squared/count - arg**2
+                        var = sum_squared/count - arg**2
                         SSW = SSW + count * var
                         
             SST = GLOBALOUTPUT['SST']
@@ -406,23 +530,18 @@ class windowHandel:
         if directory_path:
             dir_label.config(text=directory_path)
 
-    def get_selected_fields():
-        for i in X_PATH_LIST:
-            fileHandel.copy_attribute_and_add_field(X_PATH_LIST[i], X_COMBOX[i].current())
-            print(X_COMBOX[i].current())
-        t = threading.Thread(target=fileHandel.feature_to_point(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get()))
-        t.start()
-        t.join()
-        fileHandel.split_point_by_polygon(X_PATH_LIST)
-        print(X_COMBOX)
+    
 
     def confirm():
         base_path = dir_label.cget('text')
         messagebox.showinfo("确认", f"文件路径: {file_label.cget('text')}\n输出路径: {dir_label.cget('text')}")
+        for i in X_PATH_LIST:
+            fileHandel.copy_attribute_and_add_field(X_PATH_LIST[i], X_COMBOX[i].current())
+            print(X_COMBOX[i].current())
         # fileHandel.featureToPoint(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get())
-        # t = threading.Thread(target=fileHandel.feature_to_point(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get()))
-        # t.start()
-        # t.join()
+        t = threading.Thread(target=fileHandel.feature_to_point(file_label.cget('text'),dir_label.cget('text'),resolution_entry.get()))
+        t.start()
+        t.join()
         GeoDetector.risk_aear_detector()
         # t_1 = threading.Thread(target=GeoDetector.risk_aear_detector())
         # t_1.start()
@@ -437,6 +556,10 @@ class windowHandel:
         # t_4.start() 
         # t_4.join()
         print(GLOBALOUTPUT)
+        
+        fileHandel.out_txt()
+        messagebox.showinfo("完成", "文件已保存到" + base_path + "下" + "output.txt")
+        root.destroy()
 
     def cancel():
         root.destroy()
@@ -482,8 +605,6 @@ if __name__ == "__main__":
     choose_dir_btn = tk.Button(root, text="选择输出路径", command=windowHandel.choose_directory)
     choose_dir_btn.pack()
 
-    cancel1_btn = tk.Button(root, text="hah ", command=windowHandel.get_selected_fields)
-    cancel1_btn.pack(side=tk.RIGHT, padx=10)
 
     confirm_btn = tk.Button(root, text="开始计算", command=windowHandel.confirm)
     confirm_btn.pack(side=tk.RIGHT, padx=10)
